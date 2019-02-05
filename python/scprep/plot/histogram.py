@@ -1,38 +1,20 @@
 import numpy as np
-from decorator import decorator
-try:
-    import matplotlib.pyplot as plt
-    import matplotlib as mpl
-except ImportError:
-    pass
 
-from . import measure
-
-
-@decorator
-def _with_matplotlib(fun, *args, **kwargs):
-    try:
-        plt
-    except NameError:
-        raise ImportError(
-            "matplotlib not found. "
-            "Please install it with e.g. `pip install --user matplotlib`")
-    return fun(*args, **kwargs)
-
-
-def _mpl_is_gui_backend():
-    backend = mpl.get_backend()
-    if backend in ['module://ipykernel.pylab.backend_inline', 'agg']:
-        return False
-    else:
-        return True
+from .. import measure
+from .utils import (_with_matplotlib, _get_figure, show,
+                    temp_fontsize)
+from .tools import label_axis
 
 
 @_with_matplotlib
 def histogram(data,
               bins=100, log=True,
               cutoff=None, percentile=None,
-              ax=None, figsize=None, **kwargs):
+              ax=None, figsize=None,
+              xlabel=None,
+              ylabel='Number of cells',
+              fontsize=None,
+              **kwargs):
     """Plot a histogram.
 
     Parameters
@@ -55,36 +37,40 @@ def histogram(data,
         Axis to plot on. If None, a new axis will be created.
     figsize : tuple or None, optional (default: None)
         If not None, sets the figure size (width, height)
+    [x,y]label : str, optional
+        Labels to display on the x and y axis.
+    fontsize : float or None (default: None)
+        Base font size.
     **kwargs : additional arguments for `matplotlib.pyplot.hist`
+
+    Returns
+    -------
+    ax : `matplotlib.Axes`
+        axis on which plot was drawn
     """
-    if ax is None:
-        fig, ax = plt.subplots(figsize=figsize)
-    else:
-        try:
-            fig = ax.get_figure()
-        except AttributeError as e:
-            if not isinstance(ax, mpl.axes.Axes):
-                raise TypeError("Expected ax as a matplotlib.axes.Axes. "
-                                "Got {}".format(type(ax)))
-            else:
-                raise e
-    if log == 'x' or log is True:
-        bins = np.logspace(np.log10(max(np.min(data), 1)),
-                           np.log10(np.max(data)),
-                           bins)
-    ax.hist(data, bins=bins, **kwargs)
+    with temp_fontsize(fontsize):
+        fig, ax, show_fig = _get_figure(ax, figsize)
+        if log == 'x' or log is True:
+            bins = np.logspace(np.log10(max(np.min(data), 1)),
+                               np.log10(np.max(data)),
+                               bins)
+        ax.hist(data, bins=bins, **kwargs)
 
-    if log == 'x' or log is True:
-        ax.set_xscale('log')
-    if log == 'y' or log is True:
-        ax.set_yscale('log')
+        if log == 'x' or log is True:
+            ax.set_xscale('log')
+        if log == 'y' or log is True:
+            ax.set_yscale('log')
 
-    cutoff = measure._get_percentile_cutoff(
-        data, cutoff, percentile, required=False)
-    if cutoff is not None:
-        ax.axvline(cutoff, color='red')
-    if _mpl_is_gui_backend():
-        fig.show()
+        label_axis(ax.xaxis, label=xlabel)
+        label_axis(ax.yaxis, label=ylabel)
+
+        cutoff = measure._get_percentile_cutoff(
+            data, cutoff, percentile, required=False)
+        if cutoff is not None:
+            ax.axvline(cutoff, color='red')
+        if show_fig:
+            show(fig)
+    return ax
 
 
 @_with_matplotlib
@@ -92,6 +78,7 @@ def plot_library_size(data,
                       bins=100, log=True,
                       cutoff=None, percentile=None,
                       ax=None, figsize=None,
+                      xlabel='Library size',
                       **kwargs):
     """Plot the library size histogram.
 
@@ -115,11 +102,19 @@ def plot_library_size(data,
         Axis to plot on. If None, a new axis will be created.
     figsize : tuple or None, optional (default: None)
         If not None, sets the figure size (width, height)
+    [x,y]label : str, optional
+        Labels to display on the x and y axis.
     **kwargs : additional arguments for `matplotlib.pyplot.hist`
+
+    Returns
+    -------
+    ax : `matplotlib.Axes`
+        axis on which plot was drawn
     """
-    histogram(measure.library_size(data),
-              cutoff=cutoff, percentile=percentile,
-              bins=bins, log=log, ax=ax, figsize=figsize)
+    return histogram(measure.library_size(data),
+                     cutoff=cutoff, percentile=percentile,
+                     bins=bins, log=log, ax=ax, figsize=figsize,
+                     xlabel=xlabel, **kwargs)
 
 
 @_with_matplotlib
@@ -128,6 +123,7 @@ def plot_gene_set_expression(data, genes,
                              cutoff=None, percentile=None,
                              library_size_normalize=True,
                              ax=None, figsize=None,
+                             xlabel='Gene expression',
                              **kwargs):
     """Plot the histogram of the expression of a gene set.
 
@@ -155,9 +151,17 @@ def plot_gene_set_expression(data, genes,
         Axis to plot on. If None, a new axis will be created.
     figsize : tuple or None, optional (default: None)
         If not None, sets the figure size (width, height)
+    [x,y]label : str, optional
+        Labels to display on the x and y axis.
     **kwargs : additional arguments for `matplotlib.pyplot.hist`
+
+    Returns
+    -------
+    ax : `matplotlib.Axes`
+        axis on which plot was drawn
     """
-    histogram(measure.gene_set_expression(
+    return histogram(measure.gene_set_expression(
         data, genes, library_size_normalize=library_size_normalize),
         cutoff=cutoff, percentile=percentile,
-        bins=bins, log=log, ax=ax, figsize=figsize)
+        bins=bins, log=log, ax=ax, figsize=figsize,
+        xlabel=xlabel, **kwargs)
