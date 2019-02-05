@@ -9,8 +9,6 @@ install_requires = [
     'future',
     'pandas>=0.19.0,<0.24',
     'decorator',
-    'seaborn',
-    'rpy2'
 ]
 
 test_requires = [

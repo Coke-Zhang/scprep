@@ -1,29 +1,118 @@
-from rpy2.robjects.packages import STAP
-import rpy2.robjects.numpy2ri
+try:
+    from rpy2.robjects.packages import STAP
+    import rpy2.robjects.numpy2ri
+    import rpy2.robjects  # NOQA
+except ImportError:
+    pass
 import numpy as np
 import pandas as pd
+from decorator import decorator
 
-rpy2.robjects.numpy2ri.activate()
 
-def _rpy2_function(r_script):
-    r_script_STAP = STAP(r_script, "process_data")
-    def py_function(data, **kwargs):
-        r_object = r_script_STAP.process_data(data.T, **kwargs)
-        return rpy2.robjects.numpy2ri.ri2py(r_object)
-    return py_function
+@decorator
+def _with_rpy2(fun, *args, **kwargs):
+    try:
+        rpy2
+    except NameError:
+        raise ImportError(
+            "rpy2 not found. "
+            "Please install it with e.g. `pip install --user rpy2`")
+    return fun(*args, **kwargs)
 
-## TODO: Figure out how to check if the nescessary package is already installed
-## TODO: Make rpy2 not a depedency
-## TODO: Is keeping these scripts in this file the best way to maintain code?
-## TODO: Make geneson optional for MAST, adding option for releveling the condition factor
 
-_MAST_r_script = """
-suppressPackageStartupMessages({
-        library(MAST)
-        library(data.table)
-        })
+class RFunction(object):
 
-process_data <- function(data, gene_names, condition_labels) {
+    @_with_rpy2
+    def __init__(self, name, args, setup, body, quiet_setup=True):
+        self.name = name
+        self.args = args
+        self.setup = setup
+        self.body = body
+        if quiet_setup:
+            self.setup = """
+                suppressPackageStartupMessages(suppressMessages(
+                    suppressWarnings({{
+                        {setup}
+                    }})))""".format(setup=self.setup)
+
+    @property
+    def function(self):
+        try:
+            return self._function
+        except AttributeError:
+            function_text = """
+            {setup}
+            {name} <- function({args}) {{
+              {body}
+            }}
+            """.format(setup=self.setup, name=self.name,
+                       args=self.args, body=self.body)
+            self._function = getattr(STAP(function_text, self.name), self.name)
+            rpy2.robjects.numpy2ri.activate()
+            return self._function
+
+    def is_r_object(self, obj):
+        return "rpy2.robjects" in str(type(obj))
+
+    def convert(self, robject):
+        if self.is_r_object(robject):
+            if isinstance(robject, rpy2.robjects.vectors.ListVector):
+                names = self.convert(robject.names)
+                if names is rpy2.rinterface.NULL or \
+                        len(names) != len(np.unique(names)):
+                    # list
+                    robject = [self.convert(obj) for obj in robject]
+                else:
+                    # dictionary
+                    robject = {name: self.convert(
+                        obj) for name, obj in zip(robject.names, robject)}
+            else:
+                # try numpy first
+                robject = rpy2.robjects.numpy2ri.ri2py(robject)
+                if self.is_r_object(robject):
+                    # try regular conversion
+                    robject = rpy2.robjects.conversion.ri2py(robject)
+        return robject
+
+    def __call__(self, *args, **kwargs):
+        robject = self.function(*args, **kwargs)
+        return self.convert(robject)
+
+# TODO: Figure out how to check if the nescessary package is already installed
+# TODO: Make rpy2 not a depedency
+# TODO: Is keeping these scripts in this file the best way to maintain code?
+# TODO: Make geneson optional for MAST, adding option for releveling the
+# condition factor
+
+_Monocle2 = RFunction(
+    name="run_monocle",
+    setup="library(monocle)",
+    args="data",
+    body="""
+    data <- t(data)
+    colnames(data) <- 1:ncol(data)
+    rownames(data) <- 1:nrow(data)
+    fd <- new("AnnotatedDataFrame", data = as.data.frame(rownames(data)))
+    data <- newCellDataSet(data,phenoData=NULL,featureData = fd,
+                         expressionFamily=uninormal())
+    varLabels(data@featureData) <- 'gene_short_name'
+    data <- estimateSizeFactors(data)
+    data_reduced <- suppressMessages(suppressWarnings(reduceDimension(data,
+                                   max_components=2,
+                                   reduction_method='DDRTree',
+                                   norm_method="none", scaling=FALSE)))
+
+    # 2D embedding
+    cell_embedding = reducedDimS(data_reduced)
+    t(cell_embedding)""")
+
+_MAST = RFunction(
+    name="run_MAST",
+    setup="""library(MAST)
+             library(data.table)""",
+    args="data, gene_names, condition_labels",
+    body="""
+    data <- t(data)
     FCTHRESHOLD <- log2(1.5) # provided from https://bit.ly/2QB5D6D
     fdat <- data.frame(primerid = factor(gene_names))
 
@@ -46,12 +135,13 @@ process_data <- function(data, gene_names, condition_labels) {
     fcHurdle[,fdr:=p.adjust(`Pr(>Chisq)`, 'fdr')]
     fcHurdleSig <- merge(fcHurdle[fdr<.05 & abs(coef)>FCTHRESHOLD], as.data.table(mcols(sca)), by='primerid')
     setorder(fcHurdleSig, fdr)
-    return(fcHurdleSig) }
+    fcHurdleSig <- t(fcHurdleSig)
+    return(fcHurdleSig)""")
 
-"""
 
-def run_MAST(data, gene_names, condition_labels):
-    """
+def MAST(data, gene_names, condition_labels):
+    """Short function descriptor
+
     Takes a data matrix and performs pairwise differential expression analysis
     using a Hurdle model as implemented in [MAST](https://github.com/RGLab/MAST/).
     The current implementation uses the Cell Detection Rate (# non-zero genes per cell)
@@ -86,10 +176,37 @@ def run_MAST(data, gene_names, condition_labels):
     >>> import scprep
     >>> data = scprep.io.load_csv("my_data.csv")
     >>> data_ln = scprep.normalize.library_size_normalize(data)
+    >>> data_log = scprep.transform.log(data, base=2)
     >>> cond = np.hstack([np.tile('cond1', ncells_in_cond1), np.tile('cond2', ncells_in_cond2)])
-    >>> results = scprep.run.run_MAST(np.log2(data_ln + 1), gene_names = data.columns, condition = cond)
+    >>> results = scprep.run.run_MAST(data, gene_names=data.columns, condition=cond)
     """
-    _run_MAST = _rpy2_function(_MAST_r_script)
-    results = pd.DataFrame.from_records(_run_MAST(data, gene_names=gene_names, condition_labels=condition_labels), index='primerid')
+    results = pd.DataFrame.from_records(_MAST(
+        data, gene_names=gene_names, condition_labels=condition_labels), index='primerid')
     results.index.names = ['gene_name']
     return results
+
+
+def Monocle2(data):
+    """Short function descriptor
+
+    Long function descriptor
+
+    Parameters
+    ----------
+    data : array-like, shape=[n_samples, n_features]
+        Input data from both samples
+
+    Returns
+    -------
+    embedding : data type
+        Description
+
+    Examples
+    --------
+    >>> import scprep
+    >>> data = scprep.io.load_csv("my_data.csv")
+    >>> data_ln = scprep.normalize.library_size_normalize(data)
+    >>> data_log = scprep.transform.log(data)
+    >>> results = scprep.run.Monocle(data_log)
+    """
+    return _Monocle2(data)
