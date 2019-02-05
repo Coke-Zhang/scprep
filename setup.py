@@ -8,7 +8,7 @@ install_requires = [
     'scikit-learn>=0.19.1',
     'future',
     'pandas>=0.19.0,<0.24',
-    'decorator',
+    'decorator'
 ]
 
 test_requires = [
