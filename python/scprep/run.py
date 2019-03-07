@@ -113,7 +113,7 @@ _MAST = RFunction(
     args="data, gene_names, condition_labels",
     body="""
     data <- t(data)
-    FCTHRESHOLD <- log2(1.5) # provided from https://bit.ly/2QB5D6D
+    
     fdat <- data.frame(primerid = factor(gene_names))
 
     sca <- FromMatrix(data, fData = fdat)
@@ -133,7 +133,7 @@ _MAST = RFunction(
                     summaryDt[contrast==contr & component=='logFC', .(primerid, coef, ci.hi, ci.lo)], by='primerid') #logFC coefficients
 
     fcHurdle[,fdr:=p.adjust(`Pr(>Chisq)`, 'fdr')]
-    fcHurdleSig <- merge(fcHurdle[fdr<.05 & abs(coef)>FCTHRESHOLD], as.data.table(mcols(sca)), by='primerid')
+    fcHurdleSig <- merge(fcHurdle, as.data.table(mcols(sca)), by='primerid')
     setorder(fcHurdleSig, fdr)
     fcHurdleSig <- t(fcHurdleSig)
     return(fcHurdleSig)""")
@@ -168,9 +168,9 @@ def MAST(data, gene_names, condition_labels):
         `ci.hi`: upper bound of the confidence interval for logFC
         `ci.lo`: lower bound of the confidence interval for logFC
         `fdr`: false-discovery rate
-        The number of genes in the table is the number of significant genes at a
-        false discovery rate of 0.05.
-
+        The reccomended significant threshold from this table is:
+            fdr <= 0.05
+            coef >= log2(1.5)
     Examples
     --------
     >>> import scprep
