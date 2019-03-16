@@ -12,7 +12,7 @@ _formatwarning = warnings.formatwarning
 
 def _quiet_rwarning(message, category, *args, **kwargs):
     if category == rpy2.rinterface.RRuntimeWarning:
-        return str(message) + '\n'
+        return 'RRuntimeWarning: ' + str(message) + '\n'
     else:
         return _formatwarning(message, category, *args, **kwargs)
 
