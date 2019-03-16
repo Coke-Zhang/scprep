@@ -6,7 +6,6 @@ install_requires = [
     'numpy>=1.10.0',
     'scipy>=0.18.0',
     'scikit-learn>=0.19.1',
-    'future',
     'pandas>=0.19.0,<0.24',
     'decorator'
 ]
@@ -17,7 +16,7 @@ test_requires = [
     'fcsparser',
     'tables',
     'h5py',
-    'matplotlib',
+    'matplotlib>=3.0.0',
     'coverage',
     'coveralls'
 ]
@@ -26,6 +25,8 @@ doc_requires = [
     'sphinx',
     'sphinxcontrib-napoleon',
     'autodocsumm',
+    'ipykernel',
+    'nbsphinx',
 ]
 
 if sys.version_info[:2] < (3, 5):

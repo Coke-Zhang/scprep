@@ -2,32 +2,28 @@ import numpy as np
 import numbers
 import pandas as pd
 import warnings
-try:
-    import matplotlib.pyplot as plt
-    import matplotlib as mpl
-    from matplotlib import animation
-except ImportError:
-    pass
 
 from .. import utils, select
-from .utils import (_get_figure, _with_matplotlib, _is_color_array,
-                    show, _in_ipynb, parse_fontsize, temp_fontsize)
+from .utils import (_get_figure, _is_color_array,
+                    show, _in_ipynb, parse_fontsize, temp_fontsize,
+                    _with_default)
 from .tools import (create_colormap, create_normalize,
                     label_axis, generate_colorbar, generate_legend)
 
-
-def _with_default(param, default):
-    return param if param is not None else default
+plt = utils._try_import("matplotlib.pyplot")
+mpl = utils._try_import("matplotlib")
+animation = utils._try_import("matplotlib.animation")
 
 
 class _ScatterParams(object):
 
     def __init__(self, x, y, z=None, c=None, discrete=None,
                  cmap=None, cmap_scale=None, vmin=None,
-                 vmax=None, s=None, legend=None, colorbar=None):
-        self._x = utils.toarray(x).flatten()
-        self._y = utils.toarray(y).flatten()
-        self._z = utils.toarray(z).flatten() if z is not None else None
+                 vmax=None, s=None, legend=None, colorbar=None,
+                 shuffle=True):
+        self._x = utils.toarray(x).squeeze()
+        self._y = utils.toarray(y).squeeze()
+        self._z = utils.toarray(z).squeeze() if z is not None else None
         self._c = c
         self._discrete = discrete
         self._cmap = cmap
@@ -39,8 +35,10 @@ class _ScatterParams(object):
         self._colorbar = colorbar
         self._labels = None
         self._c_discrete = None
+        self.shuffle = shuffle
         self.check_size()
         self.check_c()
+        self.check_s()
         self.check_discrete()
         self.check_legend()
         self.check_cmap()
@@ -56,7 +54,10 @@ class _ScatterParams(object):
         try:
             return self._plot_idx
         except AttributeError:
-            self._plot_idx = np.random.permutation(self.size)
+            if self.shuffle:
+                self._plot_idx = np.random.permutation(self.size)
+            else:
+                self._plot_idx = np.arange(self.size)
             return self._plot_idx
 
     @property
@@ -88,7 +89,10 @@ class _ScatterParams(object):
     @property
     def s(self):
         if self._s is not None:
-            return self._s
+            if isinstance(self._s, numbers.Number):
+                return self._s
+            else:
+                return self._s[self.plot_idx]
         else:
             return 200 / np.sqrt(self.size)
 
@@ -118,7 +122,14 @@ class _ScatterParams(object):
     @property
     def c_discrete(self):
         if self._c_discrete is None:
-            self._c_discrete, self._labels = pd.factorize(self._c, sort=True)
+            if isinstance(self._cmap, dict):
+                self._labels = np.array(list(self._cmap.keys()))
+                self._c_discrete = np.zeros_like(self._c, dtype=int)
+                for i, label in enumerate(self._labels):
+                    self._c_discrete[self._c == label] = i
+            else:
+                self._c_discrete, self._labels = pd.factorize(
+                    self._c, sort=True)
         return self._c_discrete
 
     @property
@@ -139,7 +150,7 @@ class _ScatterParams(object):
             self.c_discrete
             return self._labels
         else:
-            return self._c
+            return None
 
     @property
     def legend(self):
@@ -186,7 +197,7 @@ class _ScatterParams(object):
             else:
                 return self._cmap
         else:
-            if self.constant_c():
+            if self.constant_c() or self.array_c():
                 return None
             elif self.discrete:
                 n_unique_colors = len(np.unique(self.c))
@@ -287,10 +298,17 @@ class _ScatterParams(object):
 
     def check_c(self):
         if not self.constant_c() or self.array_c():
-            self._c = utils.toarray(self._c).flatten()
+            self._c = utils.toarray(self._c).squeeze()
             if not len(self._c) == self.size:
                 raise ValueError("Expected c of length {} or 1. Got {}".format(
                     self.size, len(self._c)))
+
+    def check_s(self):
+        if self._s is not None and not isinstance(self._s, numbers.Number):
+            self._s = utils.toarray(self._s).squeeze()
+            if not len(self._s) == self.size:
+                raise ValueError("Expected s of length {} or 1. Got {}".format(
+                    self.size, len(self._s)))
 
     def check_discrete(self):
         if self._discrete is False:
@@ -307,8 +325,9 @@ class _ScatterParams(object):
             elif not self.discrete:
                 raise ValueError("Cannot use dictionary cmap with "
                                  "continuous data.")
-            elif np.any([l not in self._cmap for l in self.labels]):
-                missing = set(self.labels).difference(self._cmap.keys())
+            elif np.any([l not in self._cmap for l in np.unique(self._c)]):
+                missing = set(np.unique(self._c).tolist()
+                              ).difference(self._cmap.keys())
                 raise ValueError(
                     "Dictionary cmap requires a color "
                     "for every unique entry in `c`. "
@@ -340,11 +359,12 @@ class _ScatterParams(object):
                 self._cmap_scale = 'linear'
 
 
-@_with_matplotlib
+@utils._with_pkg("matplotlib", min_version=3)
 def scatter(x, y, z=None,
             c=None, cmap=None, cmap_scale='linear', s=None, discrete=None,
             ax=None,
             legend=None, colorbar=None,
+            shuffle=True,
             figsize=None,
             ticks=True,
             xticks=None,
@@ -410,6 +430,8 @@ def scatter(x, y, z=None,
         the legend is a colorbar. If `None`, a legend is created where possible
     colorbar : bool, optional (default: None)
         Synonym for `legend`
+    shuffle : bool, optional (default: True)
+        If True. shuffles the order of points on the plot.
     figsize : tuple, optional (default: None)
         Tuple of floats for creation of new `matplotlib` figure. Only used if
         `ax` is None.
@@ -485,7 +507,8 @@ def scatter(x, y, z=None,
             x, y, z, c=c, discrete=discrete,
             cmap=cmap, cmap_scale=cmap_scale,
             vmin=vmin, vmax=vmax, s=s,
-            legend=legend, colorbar=colorbar)
+            legend=legend, colorbar=colorbar,
+            shuffle=shuffle)
 
         fig, ax, show_fig = _get_figure(
             ax, figsize, subplot_kw=params.subplot_kw)
@@ -542,10 +565,11 @@ def scatter(x, y, z=None,
     return ax
 
 
-@_with_matplotlib
+@utils._with_pkg("matplotlib", min_version=3)
 def scatter2d(data,
               c=None, cmap=None, cmap_scale='linear', s=None, discrete=None,
-              ax=None, legend=None, figsize=None,
+              ax=None, legend=None, colorbar=None,
+              shuffle=True, figsize=None,
               ticks=True,
               xticks=None,
               yticks=None,
@@ -600,6 +624,10 @@ def scatter2d(data,
     legend : bool, optional (default: None)
         States whether or not to create a legend. If data is continuous,
         the legend is a colorbar. If `None`, a legend is created where possible.
+    colorbar : bool, optional (default: None)
+        Synonym for `legend`
+    shuffle : bool, optional (default: True)
+        If True. shuffles the order of points on the plot.
     figsize : tuple, optional (default: None)
         Tuple of floats for creation of new `matplotlib` figure. Only used if
         `ax` is None.
@@ -668,7 +696,8 @@ def scatter2d(data,
     return scatter(x=select.select_cols(data, idx=0),
                    y=select.select_cols(data, idx=1),
                    c=c, cmap=cmap, cmap_scale=cmap_scale, s=s, discrete=discrete,
-                   ax=ax, legend=legend, figsize=figsize,
+                   ax=ax, legend=legend, colorbar=colorbar,
+                   shuffle=shuffle, figsize=figsize,
                    ticks=ticks,
                    xticks=xticks,
                    yticks=yticks,
@@ -688,10 +717,12 @@ def scatter2d(data,
                    **plot_kwargs)
 
 
-@_with_matplotlib
+@utils._with_pkg("matplotlib", min_version=3)
 def scatter3d(data,
               c=None, cmap=None, cmap_scale='linear', s=None, discrete=None,
-              ax=None, legend=None, figsize=None,
+              ax=None, legend=None, colorbar=None,
+              shuffle=True,
+              figsize=None,
               ticks=True,
               xticks=None,
               yticks=None,
@@ -750,6 +781,10 @@ def scatter3d(data,
     legend : bool, optional (default: None)
         States whether or not to create a legend. If data is continuous,
         the legend is a colorbar. If `None`, a legend is created where possible.
+    colorbar : bool, optional (default: None)
+        Synonym for `legend`
+    shuffle : bool, optional (default: True)
+        If True. shuffles the order of points on the plot.
     figsize : tuple, optional (default: None)
         Tuple of floats for creation of new `matplotlib` figure. Only used if
         `ax` is None.
@@ -823,7 +858,8 @@ def scatter3d(data,
                    y=select.select_cols(data, idx=1),
                    z=select.select_cols(data, idx=2),
                    c=c, cmap=cmap, cmap_scale=cmap_scale, s=s, discrete=discrete,
-                   ax=ax, legend=legend, figsize=figsize,
+                   ax=ax, legend=legend, colorbar=colorbar,
+                   shuffle=shuffle, figsize=figsize,
                    ticks=ticks,
                    xticks=xticks,
                    yticks=yticks,
@@ -848,7 +884,7 @@ def scatter3d(data,
                    **plot_kwargs)
 
 
-@_with_matplotlib
+@utils._with_pkg("matplotlib", min_version=3)
 def rotate_scatter3d(data,
                      filename=None,
                      rotation_speed=30,
@@ -856,6 +892,7 @@ def rotate_scatter3d(data,
                      ax=None,
                      figsize=None,
                      ipython_html="jshtml",
+                     dpi=None,
                      **kwargs):
     """Create a rotating 3D scatter plot
 
@@ -879,6 +916,10 @@ def rotate_scatter3d(data,
         `ax` is None.
     ipython_html : {'html5', 'jshtml'}
         which html writer to use if using a Jupyter Notebook
+    dpi : int or None, optional (default: None)
+        The resolution in dots per inch. If None it will default to the value
+        savefig.dpi in the matplotlibrc file. If 'figure' it will set the dpi
+        to be the value of the figure. Only used if filename is not None.
     **kwargs : keyword arguments
         See :~func:`phate.plot.scatter3d`.
 
@@ -940,7 +981,7 @@ def rotate_scatter3d(data,
         frames=range(frames), interval=interval, blit=False)
 
     if filename is not None:
-        ani.save(filename, writer=writer)
+        ani.save(filename, writer=writer, dpi=dpi)
 
     if _in_ipynb():
         # credit to https://stackoverflow.com/a/45573903/3996580

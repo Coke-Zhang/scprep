@@ -62,12 +62,22 @@ Plotting
     :autosummary:
     :members:
     :inherited-members:
+    :imported-members:
     :show-inheritance:
 
 Dimensionality Reduction
 ------------------------
 
 .. automodule:: scprep.reduce
+    :autosummary:
+    :members:
+    :inherited-members:
+    :show-inheritance:
+
+Row/Column Selection
+--------------------
+
+.. automodule:: scprep.select
     :autosummary:
     :members:
     :inherited-members:
@@ -85,7 +95,7 @@ Utilities
 HDF5
 ----
 
-.. automodule:: scprep.hdf5
+.. automodule:: scprep.io.hdf5
     :autosummary:
     :members:
     :inherited-members:
