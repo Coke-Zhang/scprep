@@ -1,28 +1,25 @@
-try:
-    from rpy2.robjects.packages import STAP
-    import rpy2.robjects.numpy2ri
-    import rpy2.robjects  # NOQA
-except ImportError:
-    pass
 import numpy as np
 import pandas as pd
-from decorator import decorator
+import warnings
+
+from . import utils
+
+rpy2 = utils.try_import("rpy2")
+robjects = utils.try_import("rpy2.robjects")
+
+_formatwarning = warnings.formatwarning
 
 
-@decorator
-def _with_rpy2(fun, *args, **kwargs):
-    try:
-        rpy2
-    except NameError:
-        raise ImportError(
-            "rpy2 not found. "
-            "Please install it with e.g. `pip install --user rpy2`")
-    return fun(*args, **kwargs)
+def _quiet_rwarning(message, category, *args, **kwargs):
+    if category == rpy2.rinterface.RRuntimeWarning:
+        return str(message) + '\n'
+    else:
+        return _formatwarning(message, category, *args, **kwargs)
 
 
 class RFunction(object):
 
-    @_with_rpy2
+    @utils._with_pkg("rpy2")
     def __init__(self, name, args, setup, body, quiet_setup=True):
         self.name = name
         self.args = args
@@ -47,8 +44,9 @@ class RFunction(object):
             }}
             """.format(setup=self.setup, name=self.name,
                        args=self.args, body=self.body)
-            self._function = getattr(STAP(function_text, self.name), self.name)
-            rpy2.robjects.numpy2ri.activate()
+            self._function = getattr(robjects.packages.STAP(
+                function_text, self.name), self.name)
+            robjects.numpy2ri.activate()
             return self._function
 
     def is_r_object(self, obj):
@@ -56,7 +54,7 @@ class RFunction(object):
 
     def convert(self, robject):
         if self.is_r_object(robject):
-            if isinstance(robject, rpy2.robjects.vectors.ListVector):
+            if isinstance(robject, robjects.vectors.ListVector):
                 names = self.convert(robject.names)
                 if names is rpy2.rinterface.NULL or \
                         len(names) != len(np.unique(names)):
@@ -68,22 +66,27 @@ class RFunction(object):
                         obj) for name, obj in zip(robject.names, robject)}
             else:
                 # try numpy first
-                robject = rpy2.robjects.numpy2ri.ri2py(robject)
+                robject = robjects.numpy2ri.ri2py(robject)
                 if self.is_r_object(robject):
                     # try regular conversion
-                    robject = rpy2.robjects.conversion.ri2py(robject)
+                    robject = robjects.conversion.ri2py(robject)
+                if robject is rpy2.rinterface.NULL:
+                    robject = None
         return robject
 
     def __call__(self, *args, **kwargs):
+        # monkey patch warnings
+        warnings.formatwarning = _quiet_rwarning
         robject = self.function(*args, **kwargs)
-        return self.convert(robject)
+        robject = self.convert(robject)
+        warnings.formatwarning = _formatwarning
+        return robject
+
 
 # TODO: Figure out how to check if the nescessary package is already installed
-# TODO: Make rpy2 not a depedency
 # TODO: Is keeping these scripts in this file the best way to maintain code?
 # TODO: Make geneson optional for MAST, adding option for releveling the
 # condition factor
-
 _Monocle2 = RFunction(
     name="run_monocle",
     setup="library(monocle)",
@@ -113,7 +116,7 @@ _MAST = RFunction(
     args="data, gene_names, condition_labels",
     body="""
     data <- t(data)
-    
+
     fdat <- data.frame(primerid = factor(gene_names))
 
     sca <- FromMatrix(data, fData = fdat)
@@ -137,6 +140,58 @@ _MAST = RFunction(
     setorder(fcHurdleSig, fdr)
     fcHurdleSig <- t(fcHurdleSig)
     return(fcHurdleSig)""")
+
+_SplatSimulate = RFunction(
+    name="splat", setup="""
+        library(splatter)
+        library(scater)
+        library(magrittr)
+    """,
+    args="""
+        method='paths',
+        nBatches=1, batchCells=100,
+        nGenes=10000,
+        batch_facLoc=0.1, batch_facScale=0.1,
+        mean_rate=0.3, mean_shape=0.6,
+        lib_loc=11, lib_scale=0.2, lib_norm=False,
+        out_prob=0.05,
+        out_facLoc=4, out_facScale=0.5,
+        de_prob=0.1, de_downProb=0.1,
+        de_facLoc=0.1, de_facScale=0.4,
+        bcv_common=0.1, bcv_df=60,
+        dropout_type='none', dropout_prob=0.5,
+        dropout_mid=0, dropout_shape=-1,
+        group_prob=1,
+        path_from=0, path_length=100, path_skew=0.5,
+        path_nonlinearProb=0.1, path_sigmaFac=0.8,
+        seed=0
+    """,
+    body="""
+        group_prob <- as.numeric(group_prob)
+        path_from <- as.numeric(path_from)
+        path_length <- as.numeric(path_length)
+        path_skew <- as.numeric(path_skew)
+        sim <- splatSimulate(
+            method=method, batchCells=batchCells, nGenes=nGenes,
+            batch.facLoc=batch_facLoc, batch.facScale=batch_facScale,
+            mean.rate=mean_rate, mean.shape=mean_shape,
+            lib.loc=lib_loc, lib.scale=lib_scale, lib.norm=lib_norm,
+            out.prob=out_prob,
+            out.facLoc=out_facLoc, out.facScale=out_facScale,
+            de.prob=de_prob, de.downProb=de_downProb,
+            de.facLoc=de_facLoc, de.facScale=de_facScale,
+            bcv.common=bcv_common, bcv.df=bcv_df,
+            dropout.type=dropout_type, dropout.mid=dropout_mid, dropout.shape=dropout_shape,
+            group.prob=group_prob,
+            path.from=path_from, path.length=path_length, path.skew=path_skew,
+            path.nonlinearProb=path_nonlinearProb, path.sigmaFac=path_sigmaFac,
+            seed=seed
+        )
+        data <- sim %>%
+            counts() %>%
+            t()
+        list(data=data, time=sim$Step, branch=sim$Group)
+    """)
 
 
 def MAST(data, gene_names, condition_labels):
@@ -210,3 +265,96 @@ def Monocle2(data):
     >>> results = scprep.run.Monocle(data_log)
     """
     return _Monocle2(data)
+
+
+def SplatSimulate(
+        method="paths",
+        nBatches=1, batchCells=100,
+        nGenes=10000,
+        batch_facLoc=0.1, batch_facScale=0.1,
+        mean_rate=0.3, mean_shape=0.6,
+        lib_loc=11, lib_scale=0.2, lib_norm=False,
+        out_prob=0.05,
+        out_facLoc=4, out_facScale=0.5,
+        de_prob=0.1, de_downProb=0.1,
+        de_facLoc=0.1, de_facScale=0.4,
+        bcv_common=0.1, bcv_df=60,
+        dropout_type='none', dropout_prob=0.5,
+        dropout_mid=0, dropout_shape=-1,
+        group_prob=1,
+        path_from=0, path_length=100, path_skew=0.5,
+        path_nonlinearProb=0.1, path_sigmaFac=0.8,
+        seed=None):
+    """
+    Global parameters
+        nGenes - The number of genes to simulate.
+        nCells - The number of cells to simulate.
+        seed - Seed to use for generating random numbers.
+    Batch parameters
+        nBatches - The number of batches to simulate.
+        batchCells - The number of cells in each batch.
+        batch.facLoc - Location (meanlog) parameter for the batch effects factor log-normal distribution.
+        batch.facScale - Scale (sdlog) parameter for the batch effects factor log-normal distribution.
+    Mean parameters
+        mean.shape - Shape parameter for the mean gamma distribution.
+        mean.rate - Rate parameter for the mean gamma distribution.
+    Library size parameters
+        lib.loc - Location (meanlog) parameter for the library size log-normal distribution, or mean for the normal distribution.
+        lib.scale - Scale (sdlog) parameter for the library size log-normal distribution, or sd for the normal distribution.
+        lib.norm - Whether to use a normal distribution instead of the usual log-normal distribution.
+    Expression outlier parameters
+        out.prob - Probability that a gene is an expression outlier.
+        out.facLoc - Location (meanlog) parameter for the expression outlier factor log-normal distribution.
+        out.facScale - Scale (sdlog) parameter for the expression outlier factor log-normal distribution.
+    Group parameters
+        nGroups - The number of groups or paths to simulate.
+        group.prob - The probabilities that cells come from particular groups.
+    Differential expression parameters
+        de.prob - Probability that a gene is differentially expressed in each group or path.
+        de.loProb - Probability that a differentially expressed gene is down-regulated.
+        de.facLoc - Location (meanlog) parameter for the differential expression factor log-normal distribution.
+        de.facScale - Scale (sdlog) parameter for the differential expression factor log-normal distribution.
+    Biological Coefficient of Variation parameters
+        bcv.common - Underlying common dispersion across all genes.
+        bcv.df - Degrees of Freedom for the BCV inverse chi-squared distribution.
+    Dropout parameters
+        dropout.type - Type of dropout to simulate.
+        dropout.mid - Midpoint parameter for the dropout logistic function.
+        dropout.shape - Shape parameter for the dropout logistic function.
+    Differentiation path parameters
+        path.from - Vector giving the originating point of each path.
+        path.length - Vector giving the number of steps to simulate along each path.
+        path.skew - Vector giving the skew of each path.
+        path.nonlinearProb - Probability that a gene changes expression in a non-linear way along the differentiation path.
+        path.sigmaFac - Sigma factor for non-linear gene paths.
+    """
+    if seed is None:
+        seed = np.random.randint(2**16 - 1)
+    if dropout_type == 'binomial':
+        dropout_type = "none"
+    else:
+        dropout_prob = None
+    np.random.seed(seed)
+
+    data = _SplatSimulate(
+        method=method,
+        nBatches=nBatches, batchCells=batchCells,
+        nGenes=nGenes,
+        batch_facLoc=batch_facLoc, batch_facScale=batch_facScale,
+        mean_rate=mean_rate, mean_shape=mean_shape,
+        lib_loc=lib_loc, lib_scale=lib_scale, lib_norm=lib_norm,
+        out_prob=out_prob,
+        out_facLoc=out_facLoc, out_facScale=out_facScale,
+        de_prob=de_prob, de_downProb=de_downProb,
+        de_facLoc=de_facLoc, de_facScale=de_facScale,
+        bcv_common=bcv_common, bcv_df=bcv_df,
+        dropout_type=dropout_type, dropout_mid=dropout_mid,
+        dropout_shape=dropout_shape,
+        group_prob=group_prob,
+        path_from=path_from, path_length=path_length, path_skew=path_skew,
+        path_nonlinearProb=path_nonlinearProb, path_sigmaFac=path_sigmaFac,
+        seed=seed)
+    if dropout_prob is not None:
+        data['data'] = np.random.binomial(n=data['data'], p=1 - dropout_prob,
+                                          size=data['data'].shape)
+    return data
