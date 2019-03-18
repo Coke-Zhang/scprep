@@ -4,15 +4,17 @@ import warnings
 
 from . import utils
 
-rpy2 = utils.try_import("rpy2")
-robjects = utils.try_import("rpy2.robjects")
+rpy2 = utils._try_import("rpy2")
+robjects = utils._try_import("rpy2.robjects")
+packages = utils._try_import("rpy2.robjects.packages")
+numpy2ri = utils._try_import("rpy2.robjects.numpy2ri")
 
 _formatwarning = warnings.formatwarning
 
 
 def _quiet_rwarning(message, category, *args, **kwargs):
     if category == rpy2.rinterface.RRuntimeWarning:
-        return 'RRuntimeWarning: ' + str(message) + '\n'
+        return 'RRuntimeWarning: ' + str(message)
     else:
         return _formatwarning(message, category, *args, **kwargs)
 
@@ -44,9 +46,9 @@ class RFunction(object):
             }}
             """.format(setup=self.setup, name=self.name,
                        args=self.args, body=self.body)
-            self._function = getattr(robjects.packages.STAP(
+            self._function = getattr(packages.STAP(
                 function_text, self.name), self.name)
-            robjects.numpy2ri.activate()
+            numpy2ri.activate()
             return self._function
 
     def is_r_object(self, obj):
@@ -66,7 +68,7 @@ class RFunction(object):
                         obj) for name, obj in zip(robject.names, robject)}
             else:
                 # try numpy first
-                robject = robjects.numpy2ri.ri2py(robject)
+                robject = numpy2ri.ri2py(robject)
                 if self.is_r_object(robject):
                     # try regular conversion
                     robject = robjects.conversion.ri2py(robject)
