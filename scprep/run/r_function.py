@@ -22,7 +22,6 @@ class RFunction(object):
     """Run an R function from Python
     """
 
-    @utils._with_pkg(pkg="rpy2")
     def __init__(self, name, args, setup, body, quiet_setup=True):
         self.name = name
         self.args = args
@@ -35,26 +34,32 @@ class RFunction(object):
                         {setup}
                     }})))""".format(setup=self.setup)
 
+    @utils._with_pkg(pkg="rpy2")
+    def _build(self):
+        function_text = """
+        {setup}
+        {name} <- function({args}) {{
+          {body}
+        }}
+        """.format(setup=self.setup, name=self.name,
+                   args=self.args, body=self.body)
+        fun = getattr(packages.STAP(
+            function_text, self.name), self.name)
+        numpy2ri.activate()
+        return fun
+
     @property
     def function(self):
         try:
             return self._function
         except AttributeError:
-            function_text = """
-            {setup}
-            {name} <- function({args}) {{
-              {body}
-            }}
-            """.format(setup=self.setup, name=self.name,
-                       args=self.args, body=self.body)
-            self._function = getattr(packages.STAP(
-                function_text, self.name), self.name)
-            numpy2ri.activate()
+            self._function = self._build()
             return self._function
 
     def is_r_object(self, obj):
         return "rpy2.robjects" in str(type(obj))
 
+    @utils._with_pkg(pkg="rpy2")
     def convert(self, robject):
         if self.is_r_object(robject):
             if isinstance(robject, robjects.vectors.ListVector):
