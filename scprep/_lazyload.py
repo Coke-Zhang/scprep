@@ -12,7 +12,7 @@ importspec = {
                     'lines': ['Line2D'],
                     'ticker':['MaxNLocator'],
                     'transforms':['ScaledTranslation']},
-                   'get_backend'],
+                   'get_backend', 'rc'],
     'mpl_toolkits': [{'mplot3d': ['Axes3D']}],
     'fcsparser': [{'api': ['ParserFeatureNotImplementedError', 'parse']}],
     'rpy2': [{'robjects': [{'numpy2ri': ['activate', 'ri2py'],
