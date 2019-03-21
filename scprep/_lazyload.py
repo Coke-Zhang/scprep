@@ -43,24 +43,15 @@ class AliasModule(object):
 
     def __getattribute__(self, attr):
         super_getattr = super().__getattribute__
-        if (not super_getattr("__loaded__")) and \
-                (attr in super_getattr("__module_members__") +
-                 super_getattr("__implicit_members__")):
-            members = super_getattr("__module_members__")
-            pkg_name = super_getattr("__module_name__")
-            pkg = importlib.import_module(pkg_name)
-            for member in members:
-                if isinstance(member, dict):
-                    # submodules
-                    pass
-                else:
-                    setattr(self, member, getattr(pkg, member))
-            for member in super_getattr("__implicit_members__"):
-                try:
-                    setattr(self, member, getattr(pkg, member))
-                except AttributeError:
-                    pass
-        return super_getattr(attr)
+        if attr in (super_getattr("__module_members__") +
+                    super_getattr("__implicit_members__")):
+            if not super_getattr("__loaded__"):
+                setattr(
+                    self, "__module__",
+                    importlib.import_module(super_getattr("__module_name__")))
+            return getattr(super_getattr("__module__"), attr)
+        else:
+            return super_getattr(attr)
 
     def __str__(self):
         super_getattr = super().__getattribute__
