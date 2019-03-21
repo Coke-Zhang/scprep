@@ -3,10 +3,7 @@ import warnings
 
 from .. import utils
 
-rpy2 = utils._try_import("rpy2")
-robjects = utils._try_import("rpy2.robjects")
-packages = utils._try_import("rpy2.robjects.packages")
-numpy2ri = utils._try_import("rpy2.robjects.numpy2ri")
+from .._lazyload import rpy2
 
 _formatwarning = warnings.formatwarning
 
@@ -43,9 +40,9 @@ class RFunction(object):
         }}
         """.format(setup=self.setup, name=self.name,
                    args=self.args, body=self.body)
-        fun = getattr(packages.STAP(
+        fun = getattr(rpy2.robjects.packages.STAP(
             function_text, self.name), self.name)
-        numpy2ri.activate()
+        rpy2.robjects.numpy2ri.activate()
         return fun
 
     @property
@@ -62,7 +59,7 @@ class RFunction(object):
     @utils._with_pkg(pkg="rpy2")
     def convert(self, robject):
         if self.is_r_object(robject):
-            if isinstance(robject, robjects.vectors.ListVector):
+            if isinstance(robject, rpy2.robjects.vectors.ListVector):
                 names = self.convert(robject.names)
                 if names is rpy2.rinterface.NULL or \
                         len(names) != len(np.unique(names)):
@@ -74,10 +71,10 @@ class RFunction(object):
                         obj) for name, obj in zip(robject.names, robject)}
             else:
                 # try numpy first
-                robject = numpy2ri.ri2py(robject)
+                robject = rpy2.robjects.numpy2ri.ri2py(robject)
                 if self.is_r_object(robject):
                     # try regular conversion
-                    robject = robjects.conversion.ri2py(robject)
+                    robject = rpy2.robjects.conversion.ri2py(robject)
                 if robject is rpy2.rinterface.NULL:
                     robject = None
         return robject
