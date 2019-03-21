@@ -5,7 +5,7 @@ importspec = {
                                'ListedColormap', 'LinearSegmentedColormap',
                                'LogNorm', 'SymLogNorm', 'PowerNorm'],
                     'pyplot': ['scatter', 'rcParams', 'subplots',
-                               'hist', 'setp'],
+                               'hist', 'setp', 'close', 'show'],
                     'animation': ['FuncAnimation'],
                     'cm': ['tab10'],
                     'axes': ['Axes'],
