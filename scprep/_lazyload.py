@@ -1,4 +1,5 @@
 import importlib
+import sys
 
 # Key:
 # { module : [{submodule1:[subsubmodule1, subsubmodule2]}, submodule2] }
@@ -53,11 +54,9 @@ class AliasModule(object):
             # accessing an unknown member
             if not super_getattr("__loaded__"):
                 # module hasn't been imported yet
-                setattr(
-                    self, "__module__",
-                    importlib.import_module(super_getattr("__module_name__")))
+                importlib.import_module(super_getattr("__module_name__"))
             # access lazy loaded member from loaded module
-            return getattr(super_getattr("__module__"), attr)
+            return getattr(sys.modules[super_getattr("__module_name__")], attr)
 
 
 # load required aliases into global namespace
