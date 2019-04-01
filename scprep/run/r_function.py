@@ -1,25 +1,19 @@
 import numpy as np
-import warnings
 
 from .. import utils
-
 from .._lazyload import rpy2
 
-_formatwarning = warnings.formatwarning
 
-
-def _quiet_rwarning(message, category, *args, **kwargs):
-    if category == rpy2.rinterface.RRuntimeWarning:
-        return 'RRuntimeWarning: ' + str(message)
-    else:
-        return _formatwarning(message, category, *args, **kwargs)
+def strip_console_warning(s: str) -> None:
+    rpy2.rinterface_lib.callbacks.logger.warning(
+        rpy2.rinterface_lib.callbacks._WRITECONSOLE_EXCEPTION_LOG, s.strip())
 
 
 class RFunction(object):
     """Run an R function from Python
     """
 
-    def __init__(self, name, args, setup, body, quiet_setup=True):
+    def __init__(self, name="fun", args="", setup="", body="", quiet_setup=True):
         self.name = name
         self.args = args
         self.setup = setup
@@ -31,7 +25,7 @@ class RFunction(object):
                         {setup}
                     }})))""".format(setup=self.setup)
 
-    @utils._with_pkg(pkg="rpy2")
+    @utils._with_pkg(pkg="rpy2", min_version="3.0")
     def _build(self):
         function_text = """
         {setup}
@@ -54,15 +48,15 @@ class RFunction(object):
             return self._function
 
     def is_r_object(self, obj):
-        return "rpy2.robjects" in str(type(obj))
+        return "rpy2.robjects" in str(type(obj)) or obj is rpy2.rinterface.NULL
 
-    @utils._with_pkg(pkg="rpy2")
+    @utils._with_pkg(pkg="rpy2", min_version="3.0")
     def convert(self, robject):
         if self.is_r_object(robject):
             if isinstance(robject, rpy2.robjects.vectors.ListVector):
                 names = self.convert(robject.names)
-                if names is rpy2.rinterface.NULL or \
-                        len(names) != len(np.unique(names)):
+                if names is None or \
+                        len(names) > len(np.unique(names)):
                     # list
                     robject = [self.convert(obj) for obj in robject]
                 else:
@@ -71,18 +65,20 @@ class RFunction(object):
                         obj) for name, obj in zip(robject.names, robject)}
             else:
                 # try numpy first
-                robject = rpy2.robjects.numpy2ri.ri2py(robject)
+                robject = rpy2.robjects.numpy2ri.rpy2py(robject)
                 if self.is_r_object(robject):
                     # try regular conversion
-                    robject = rpy2.robjects.conversion.ri2py(robject)
+                    robject = rpy2.robjects.conversion.rpy2py(robject)
                 if robject is rpy2.rinterface.NULL:
                     robject = None
         return robject
 
+    @utils._with_pkg(pkg="rpy2", min_version="3.0")
     def __call__(self, *args, **kwargs):
         # monkey patch warnings
-        warnings.formatwarning = _quiet_rwarning
+        default_console_warning = rpy2.rinterface_lib.callbacks.consolewrite_warnerror
+        rpy2.rinterface_lib.callbacks.consolewrite_warnerror = strip_console_warning
         robject = self.function(*args, **kwargs)
         robject = self.convert(robject)
-        warnings.formatwarning = _formatwarning
+        rpy2.rinterface_lib.callbacks.consolewrite_warnerror = default_console_warning
         return robject
